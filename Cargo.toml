@@ -1,0 +1,9 @@
+[package]
+name = "wolog"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+rocket = "0.5.1"
+rocket_db_pools = { version = "0.2.0", features = ["sqlx_sqlite"] }
+rocket_dyn_templates = { version = "0.2.0", features = ["tera"] }
