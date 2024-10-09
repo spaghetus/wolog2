@@ -1,0 +1,47 @@
+{% extends "main" %}
+
+{% block toc %}
+{% endblock toc %}
+
+{% block license %}
+<p xmlns:cc="http://creativecommons.org/ns#"
+    xmlns:dct="http://purl.org/dc/terms/"><a property="dct:title"
+        rel="cc:attributionURL"
+        href="https://wolo.dev">the wolog</a> is licensed under <a href="https://creativecommons.org/licenses/by-nc/4.0/?ref=chooser-v1"
+        target="_blank"
+        rel="license noopener noreferrer"
+        style="display:inline-block;">CC BY-NC 4.0</a>
+    except where otherwise specified
+</p>
+<hr>
+<p><b>read carefully!</b></p>
+<p class="browsewrap">
+    by connecting to this website or allowing or instructing an agent to do the same on your behalf, you have entered into a legally binding agreement, on behalf of yourself and your current and former employer(s), to release the author from all obligations and restrictions arising from current and future non-negotiated agreements (hereafter "agreements"; including, but not limited to, end-user license, terms of service, shrinkwrap, clickwrap, browsewrap, confidentiality, non-disclosure, non-compete, and acceptable use agreements) between the author and your current and former employers, their partners, licensors, agents, and assigns, in perpetuity, without prejudice to ongoing rights and privileges conferred to the author by the former. you further represent that you have the authority to release the author from any agreements on behalf of your current and former employer(s). to opt out, send a notarized request containing your legal name, street address, and social security number by certified mail to 123 Elf Rd North Pole 88888 and it will be processed within 90 business years.
+</p>
+{% endblock license %}
+
+{% block head %}
+<title>Home</title>
+{% endblock head %}
+
+{% block bodyprops %}
+typeof="Blog"
+{% endblock bodyprops %}
+
+{% block main %}
+<main>
+    <h1 property="name">the wolog</h1>
+
+    <p>
+        Description goes here
+    </p>
+
+    <h2>Recent articles</h2>
+
+    <div class="cards">
+        {% for article in articles %}
+        {{ macros::article_card(path=article[0], meta=article[1], property="blogPost") }}
+        {% endfor %}
+    </div>
+</main>
+{% endblock main %}

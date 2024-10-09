@@ -1,0 +1,27 @@
+{% extends "main" %}
+
+{% block head %}
+<title>Tag Listing</title>
+{% endblock head %}
+
+{% block toc %}
+{% endblock toc %}
+
+{% block bodyprops %}
+typeof="Collection"
+{% endblock bodyprops %}
+
+{% block main %}
+<main vocab="http://schema.org/"
+    typeof="Collection"
+    url=".">
+    <section>
+        <h1>Listing for {{tags | join(sep=", ")}}</h1>
+        <div class="cards">
+            {% for article in articles %}
+            {{ macros::article_card(path=article[0], meta=article[1]) }}
+            {% endfor %}
+        </div>
+    </section>
+</main>
+{% endblock main %}

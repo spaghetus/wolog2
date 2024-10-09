@@ -1,0 +1,45 @@
+{% extends "main" %}
+
+{% block head %}
+<title>{{meta.title}}</title>
+{% endblock head %}
+
+{% block toc %}
+{% if toc != "" %}
+<section class="toc">
+    {{ toc }}
+</section>
+{% endif %}
+{% endblock toc %}
+
+{% block bodyprops %}
+typeof="BlogPosting"
+{% endblock bodyprops %}
+
+{% block main %}
+<main>
+    <header>
+        <h1 property="name">{{meta.title}}</h1>
+        <div hidden="true"
+            property="abstract">{{meta.blurb}}</div>
+        <span property="keywords"
+            hidden="true">{{meta.tags | join(sep=",")}}</span>
+    </header>
+    {{ content | safe }}
+    <hr>
+    <footer>
+        <ul class="horizontal">
+            Filed under
+            {% for tag in meta.tags %}
+            <li><a href="/tags?tags={{tag}}"
+                    property="isPartOf">#{{tag}}</a></li>
+            {% endfor %}
+        </ul>
+        <p>
+            Created <time property="dateCreated"
+                datetime="{{meta.created}}">{{meta.created}}</time>{% if meta.created != meta.updated %}; updated <time property="dateModified"
+                datetime="{{meta.updated}}">{{meta.updated}}{% endif %}.
+        </p>
+    </footer>
+</main>
+{% endblock main %}

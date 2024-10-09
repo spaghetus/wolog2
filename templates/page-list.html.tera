@@ -1,0 +1,81 @@
+{% extends "main" %}
+
+{% block head %}
+<title>Page Listing</title>
+{% endblock head %}
+
+{% block toc %}
+{% endblock toc %}
+
+{% block bodyprops %}
+typeof="Collection"
+{% endblock bodyprops %}
+
+{% block main %}
+<main>
+    <h1>Page Listing</h1>
+    <section>
+        <h2>Search parameters</h2>
+        <form action="/search/{{ search_path }}"
+            method="get">
+            <label for="title_filter">Title</label>
+            <input type="text"
+                name="title_filter"
+                id="title_filter"
+                value="{{ title_filter }}">
+            <br>
+            <label for="created_since">Created Since</label>
+            <input type="date"
+                name="created_since"
+                id="created_since"
+                value="{{ created_since }}">
+            <br>
+            <label for="created_before">Created Before</label>
+            <input type="date"
+                name="created_before"
+                id="created_before"
+                value="{{ created_before }}">
+            <br>
+            <label for="updated_since">Updated Since</label>
+            <input type="date"
+                name="updated_since"
+                id="updated_since"
+                value="{{ updated_since }}">
+            <br>
+            <label for="updated_before">Updated Before</label>
+            <input type="date"
+                name="updated_before"
+                id="updated_before"
+                value="{{ updated_before }}">
+            <br>
+            <label for="sort_type">Sort type</label><br>
+            {% for value in ["CreateAsc", "CreateDesc", "UpdateAsc", "UpdateDesc", "NameAsc", "NameDesc"] %}
+            <input type="radio"
+                name="sort_type"
+                id="{{ value }}"
+                value="{{ value }}"
+                {% if sort_type == value %}
+                checked="checked"
+                {% endif %}>
+            <label for="{{ value }}">{{ value }}</label>
+            <br>
+            {% endfor %}
+            <input type="reset">
+            <input type="submit">
+        </form>
+        <p>
+            <i>
+                (You can also add a path after <code>search</code> in the URL to filter by path!)
+            </i>
+        </p>
+    </section>
+    <section>
+        <h2>Search results</h2>
+        <div class="cards">
+            {% for article in articles %}
+            {{ macros::article_card(path=article[0], meta=article[1]) }}
+            {% endfor %}
+        </div>
+    </section>
+</main>
+{% endblock main %}
