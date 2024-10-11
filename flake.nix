@@ -19,11 +19,16 @@
         "aarch64-darwin"
       ];
 
-      flake = {...}: rec {
+      flake = {system, ...}: rec {
+        overlays.default = final: prev: {
+          inherit final prev;
+          wolog = self.packages."${final.system}".default;
+        };
         nixosModules.default = import ./module.nix;
         nixosConfigurations.container = nixpkgs.lib.nixosSystem {
           system = "x86_64-linux";
           modules = [
+            {nixpkgs.overlays = [overlays.default];}
             nixosModules.default
             ({pkgs, ...}: {
               # Only allow this to boot as a container
@@ -33,7 +38,6 @@
               # Allow nginx through the firewall
               networking.firewall.allowedTCPPorts = [8000];
 
-              services.wolog.package = self.packages.x86_64-linux.wolog;
               services.wolog.enable = true;
               services.wolog.articlesDir = builtins.toString ./articles;
               services.wolog.address = "0.0.0.0";
