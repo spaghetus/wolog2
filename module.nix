@@ -22,7 +22,7 @@ in {
 
     address = mkOption {
       type = types.str;
-      default = "localhost";
+      default = "127.0.0.1";
       description = ''
         Listen address for the wolog.
       '';
@@ -121,8 +121,10 @@ in {
           Group = cfg.group;
 
           EnvironmentFile = cfg.envFile;
-          WorkingDirectory = workdir;
-          ExecStart = "${wolog}";
+          ExecStart = pkgs.writeScript "wolog-start" ''
+            cd ${builtins.toString workdir}
+            ${wolog}
+          '';
           Restart = "always";
           # BindReadOnlyPaths = "${cfg.articlesDir} ${cfg.templatesDir} ${cfg.staticDir} ${workdir}";
         };
