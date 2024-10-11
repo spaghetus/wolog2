@@ -125,10 +125,6 @@ in {
           ExecStart = "${wolog}";
           Restart = "always";
           BindReadOnlyPaths = "${cfg.articlesDir} ${cfg.templatesDir} ${cfg.staticDir} ${workdir}";
-          MemoryDenyWriteExecute = true;
-          ProtectControlGroups = true;
-          ProtectHome = "tmpfs";
-          ProtectSystem = "strict";
         };
       };
       users.users = optionalAttrs (cfg.user == "wolog") {
