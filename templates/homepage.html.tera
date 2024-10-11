@@ -32,9 +32,7 @@ typeof="Blog"
 <main>
     <h1 property="name">the wolog</h1>
 
-    <p>
-        Description goes here
-    </p>
+    {{ content | safe }}
 
     <h2>Recent articles</h2>
 
