@@ -61,7 +61,7 @@ impl ArticleManager {
                 return Ok(existing.value().0.clone());
             }
         }
-        let Ok(mut new_article) = Article::render(path)
+        let Ok(mut new_article) = Article::render(path, self)
             .await
             .inspect_err(|e| eprintln!("Article {path:?} failed with {e:#?}"))
         else {
@@ -149,7 +149,10 @@ pub struct Article {
 }
 
 impl Article {
-    pub async fn render(path: &Path) -> Result<Self, error::ArticleError> {
+    pub async fn render(
+        path: &Path,
+        article_mgr: &ArticleManager,
+    ) -> Result<Self, error::ArticleError> {
         let pandoc_ast = rocket::tokio::task::spawn_blocking({
             let path = path.to_path_buf();
             move || -> Result<_, error::ArticleError> {
@@ -174,7 +177,7 @@ impl Article {
             rocket::tokio::task::spawn_blocking(move || Pandoc::from_json(&pandoc_ast)).await?;
 
         for filter in filters::FILTERS {
-            filter(&mut pandoc_ast);
+            filter(&mut pandoc_ast, article_mgr);
         }
         fn pandoc_inline_to_string(i: &Inline) -> &str {
             match i {
