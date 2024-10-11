@@ -127,7 +127,7 @@ in {
             ${wolog}
           '';
           Restart = "always";
-          # BindReadOnlyPaths = "${cfg.articlesDir} ${cfg.templatesDir} ${cfg.staticDir} ${workdir}";
+          BindReadOnlyPaths = "${cfg.articlesDir} ${cfg.templatesDir} ${cfg.staticDir} ${workdir}";
         };
       };
       users.users = optionalAttrs (cfg.user == "wolog") {
