@@ -8,7 +8,7 @@
   cfg = config.services.wolog;
   toml = pkgs.formats.toml {};
   path2derivation = path: pkgs.runCommand (builtins.toString path) {} ''cp -r ${path} $out'';
-  inherit (lib) mkEnableOption mkPackageOption mkIf mkOption types optional optionalAttrs;
+  inherit (lib) mkEnableOption mkPackageOption mkIf mkOption types optionalAttrs;
 in {
   options.services.wolog = {
     enable = mkEnableOption "wolog";
