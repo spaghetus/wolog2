@@ -16,7 +16,7 @@ html {
         --font-color: black;
         --font-accent: indigo;
         color: var(--font-color);
-        background: url(/bg-dots.png),
+        background: url(/static/bg-dots.png),
             linear-gradient(to bottom right, var(--background-accent), var(--background-color));
     }
 
