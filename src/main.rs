@@ -36,7 +36,8 @@ async fn main() {
                 tags_list
             ],
         )
-        .mount("/", FileServer::from("./static"))
+        .mount("/assets", FileServer::from("./articles/assets"))
+        .mount("/static", FileServer::from("./static"))
         .launch()
         .await
         .expect("Rocket failed");
