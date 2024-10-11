@@ -113,6 +113,8 @@ in {
         after = ["network.target"];
         wantedBy = ["multi-user.target"];
 
+        confinement.packages = [pkgs.pandoc];
+
         serviceConfig = {
           Type = "simple";
           User = cfg.user;
