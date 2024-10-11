@@ -144,8 +144,8 @@ impl ArticleManager {
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Article {
-    content: String,
-    meta: ArticleMeta,
+    pub content: String,
+    pub meta: ArticleMeta,
 }
 
 impl Article {

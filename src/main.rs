@@ -63,7 +63,18 @@ async fn render_homepage(
     articles.sort_by_key(|(_, a)| a.created);
     articles.reverse();
     articles = articles.into_iter().take(9).collect();
-    Ok(Template::render("homepage", context! {articles}))
+    let homepage = article_manager
+        .get_article(Path::new("articles/index.md"))
+        .await
+        .ok();
+    let homepage = homepage
+        .as_deref()
+        .map(|a| a.content.as_str())
+        .unwrap_or("Create an article called index.md to populate the homepage");
+    Ok(Template::render(
+        "homepage",
+        context! {articles, content: homepage},
+    ))
 }
 
 #[get("/<article..>")]
