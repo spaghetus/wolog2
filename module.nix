@@ -113,7 +113,7 @@ in {
         after = ["network.target"];
         wantedBy = ["multi-user.target"];
 
-        confinement.packages = [pkgs.pandoc];
+        path = [pkgs.pandoc];
 
         serviceConfig = {
           Type = "simple";
