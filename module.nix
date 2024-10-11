@@ -122,7 +122,7 @@ in {
 
           EnvironmentFile = cfg.envFile;
           ExecStart = pkgs.writeScript "wolog-start" ''
-            #!/usr/bin/env bash
+            #!/bin/sh
             cd ${builtins.toString workdir}
             ${wolog}
           '';
