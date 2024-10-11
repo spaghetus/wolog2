@@ -128,6 +128,7 @@ in {
           '';
           Restart = "always";
           BindReadOnlyPaths = "${cfg.articlesDir} ${cfg.templatesDir} ${cfg.staticDir} ${workdir}";
+          ProtectHome = "tmpfs";
         };
       };
       users.users = optionalAttrs (cfg.user == "wolog") {
