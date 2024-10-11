@@ -7,6 +7,7 @@
   stdenv = pkgs.stdenv;
   cfg = config.services.wolog;
   toml = pkgs.formats.toml {};
+  path2derivation = path: pkgs.runCommand (builtins.toString path) {} ''cp -r ${path} $out'';
   inherit (lib) mkEnableOption mkPackageOption mkIf mkOption types optional optionalAttrs;
 in {
   options.services.wolog = {
@@ -38,7 +39,7 @@ in {
 
     templatesDir = mkOption {
       type = types.str;
-      default = builtins.toString ./templates;
+      default = builtins.toString (path2derivation ./templates);
       description = ''
         The directory where the wolog reads its templates.
       '';
@@ -46,7 +47,7 @@ in {
 
     staticDir = mkOption {
       type = types.path;
-      default = builtins.toString ./static;
+      default = builtins.toString (path2derivation ./static);
       description = ''
         The directory where the wolog reads its static files.
       '';
