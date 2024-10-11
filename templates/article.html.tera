@@ -28,6 +28,7 @@ typeof="BlogPosting"
     {{ content | safe }}
     <hr>
     <footer>
+        {% if meta.tags %}
         <ul class="horizontal">
             Filed under
             {% for tag in meta.tags %}
@@ -35,6 +36,7 @@ typeof="BlogPosting"
                     property="isPartOf">#{{tag}}</a></li>
             {% endfor %}
         </ul>
+        {% endif %}
         <p>
             Created <time property="dateCreated"
                 datetime="{{meta.created}}">{{meta.created}}</time>{% if meta.created != meta.updated %}; updated <time property="dateModified"
