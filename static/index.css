@@ -20,7 +20,7 @@ html {
             linear-gradient(to bottom right, var(--background-accent), var(--background-color));
     }
 
-    body>div {
+    div.paper {
         align-items: initial;
         display: flex;
         margin: 32px;
