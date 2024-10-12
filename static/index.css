@@ -155,7 +155,7 @@ ul.horizontal>li:not(:last-child)::after {
 }
 
 @media screen and (orientation: portrait) {
-    body>div {
+    div.paper {
         flex-direction: column;
         max-width: unset;
         width: 100vw;
