@@ -223,3 +223,7 @@ h3::before {
 a:hover {
     color: var(--font-accent)
 }
+
+main img {
+    max-width: 100%;
+}
