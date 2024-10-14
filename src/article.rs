@@ -124,6 +124,7 @@ impl ArticleManager {
                         .await
                         .unwrap_or_default()
                         .drain()
+                        .filter(|(_, a)| !a.hidden)
                         .for_each(|(key, value)| {
                             out.insert(key, value);
                         })
@@ -280,6 +281,8 @@ pub struct ArticleMeta {
     pub toc: Vec<Toc>,
     #[serde(default)]
     pub exclude_from_rss: bool,
+    #[serde(default)]
+    pub hidden: bool,
     #[serde(default)]
     pub updated: NaiveDate,
     #[serde(default)]
