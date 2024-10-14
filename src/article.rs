@@ -110,6 +110,7 @@ impl ArticleManager {
         let mut out: HashMap<PathBuf, ArticleMeta> = self
             .articles
             .iter()
+            .filter(|pair| !pair.value().0.meta.hidden)
             .filter(|pair| pair.key().starts_with(path))
             .map(|pair| (pair.key().clone(), pair.value().0.meta.clone()))
             .collect();
