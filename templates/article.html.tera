@@ -7,7 +7,9 @@
 {% block toc %}
 {% if toc != "" %}
 <section class="toc">
-    {{ toc | safe }}
+    <ul>
+        {{ toc | safe }}
+    </ul>
 </section>
 {% endif %}
 {% endblock toc %}
