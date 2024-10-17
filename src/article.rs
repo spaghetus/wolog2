@@ -321,7 +321,7 @@ impl Display for Toc {
                 subheadings,
             } => write!(
                 f,
-                "<li><a href=\"#{anchor}\">{label}</a>{}</li>",
+                "<li><a href=\"#{anchor}\">{label}</a><ul>{}</ul></li>",
                 subheadings
                     .iter()
                     .map(|s| s.to_string())
