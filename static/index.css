@@ -89,7 +89,8 @@ html {
         border-bottom: 0;
     }
 
-    aside ul {
+    aside ul,
+    aside ol {
         padding-left: 16px;
     }
 
