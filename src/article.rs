@@ -4,6 +4,7 @@ use dashmap::DashMap;
 use error::ArticleError;
 use pandoc_ast::{Block, Inline, MetaValue, Pandoc};
 use rocket::{
+    form::{FromFormField, ValueField},
     http::uri::{error::PathError, Segments},
     request::FromSegments,
     response::Responder,
@@ -17,7 +18,7 @@ use std::{
     ffi::{OsStr, OsString},
     fmt::Display,
     io::{Read, Write},
-    ops::Deref,
+    ops::{Bound, Deref, RangeBounds},
     path::{Path, PathBuf},
     process::{Command, Stdio},
     str::FromStr,
@@ -25,8 +26,9 @@ use std::{
     sync::Arc,
     time::{Duration, Instant, SystemTime},
 };
+use strum::EnumString;
 
-use crate::filters;
+use crate::filters::{self, apply_filters};
 
 pub mod error;
 
@@ -48,7 +50,10 @@ impl ArticleManager {
     pub async fn force_rescan(&self) {
         *self.last_full_scan.write().await = Instant::now() - Duration::from_secs(60 * 60 * 60);
     }
-    pub async fn get_article(&self, path: &Path) -> Result<Arc<Article>, error::ArticleError> {
+    pub async fn get_article(
+        self: Arc<Self>,
+        path: &Path,
+    ) -> Result<Arc<Article>, error::ArticleError> {
         let existing = self.articles.get(path);
         let meta = rocket::tokio::fs::metadata(&path).await.ok();
         let disk_time = meta.as_ref().and_then(|m| m.modified().ok());
@@ -57,11 +62,12 @@ impl ArticleManager {
             if disk_time
                 .map(|disk_time| disk_time <= cached_time)
                 .unwrap_or(true)
+                && !existing.0.meta.always_rerender
             {
                 return Ok(existing.value().0.clone());
             }
         }
-        let Ok(mut new_article) = Article::render(path, self)
+        let Ok(mut new_article) = Article::render(path, self.clone())
             .await
             .inspect_err(|e| eprintln!("Article {path:?} failed with {e:#?}"))
         else {
@@ -101,8 +107,9 @@ impl ArticleManager {
 
     #[async_recursion]
     pub async fn get_all_articles(
-        &self,
+        self: Arc<Self>,
         path: &Path,
+        exclude_paths: &[PathBuf],
     ) -> Result<HashMap<PathBuf, ArticleMeta>, ArticleError> {
         use rocket::tokio::fs;
         let mut children = fs::read_dir(path).await?;
@@ -120,8 +127,12 @@ impl ArticleManager {
             eprintln!("Doing full search");
             while let Some(child) = children.next_entry().await? {
                 let path = child.path();
+                if exclude_paths.iter().any(|p| path.starts_with(p)) {
+                    continue;
+                }
                 if child.file_type().await.unwrap().is_dir() {
-                    self.get_all_articles(&path)
+                    self.clone()
+                        .get_all_articles(&path, exclude_paths)
                         .await
                         .unwrap_or_default()
                         .drain()
@@ -130,7 +141,7 @@ impl ArticleManager {
                             out.insert(key, value);
                         })
                 } else if path.extension() == Some(&md) {
-                    if let Ok(article) = self.get_article(&path).await {
+                    if let Ok(article) = self.clone().get_article(&path).await {
                         out.insert(path, article.meta.clone());
                     };
                 }
@@ -142,9 +153,110 @@ impl ArticleManager {
 
         Ok(out)
     }
+
+    pub async fn search(
+        self: Arc<Self>,
+        search: &Search,
+    ) -> Result<Vec<(PathBuf, ArticleMeta)>, ArticleError> {
+        let articles = self
+            .get_all_articles(
+                &Path::new("./articles").join(&search.search_path),
+                &search.exclude_paths,
+            )
+            .await?;
+        let mut articles: Vec<_> = articles
+            .into_iter()
+            .filter(|(_, article)| {
+                search.created.contains(&article.created)
+                    && search.updated.contains(&article.updated)
+                    && search.tags.iter().all(|t| article.tags.contains(t))
+                    && article
+                        .title
+                        .contains(search.title_filter.as_deref().unwrap_or(""))
+            })
+            .collect();
+        articles.sort_by(search.sort_type.sort_fn());
+        Ok(articles)
+    }
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+pub type Bounds<B> = (Bound<B>, Bound<B>);
+
+fn unbounded<B>() -> Bounds<B> {
+    (Bound::Unbounded, Bound::Unbounded)
+}
+
+#[derive(Serialize, Deserialize, Default, Clone, Copy, Debug, EnumString)]
+pub enum SortType {
+    CreateAsc,
+    #[default]
+    CreateDesc,
+    UpdateAsc,
+    UpdateDesc,
+    NameAsc,
+    NameDesc,
+}
+
+impl<'r> FromFormField<'r> for SortType {
+    fn from_value(field: ValueField<'r>) -> rocket::form::Result<'r, Self> {
+        use rocket::form::error::*;
+        let content = field.value;
+        if content.is_empty() {
+            return Err(Errors::from(ErrorKind::Missing));
+        }
+        Self::from_str(content)
+            .map_err(|e| Errors::from(ErrorKind::Validation(e.to_string().into())))
+    }
+}
+
+impl SortType {
+    pub fn sort_fn(
+        &self,
+    ) -> &dyn Fn(&(PathBuf, ArticleMeta), &(PathBuf, ArticleMeta)) -> std::cmp::Ordering {
+        match self {
+            SortType::CreateAsc => &|(_, l), (_, r)| l.created.cmp(&r.created),
+            SortType::CreateDesc => &|(_, l), (_, r)| r.created.cmp(&l.created),
+            SortType::UpdateAsc => &|(_, l), (_, r)| l.updated.cmp(&r.updated),
+            SortType::UpdateDesc => &|(_, l), (_, r)| r.updated.cmp(&l.updated),
+            SortType::NameAsc => &|(_, l), (_, r)| l.title.cmp(&r.title),
+            SortType::NameDesc => &|(_, l), (_, r)| r.title.cmp(&l.title),
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct Search {
+    #[serde(default)]
+    pub search_path: PathBuf,
+    #[serde(default)]
+    pub exclude_paths: Vec<PathBuf>,
+    #[serde(default)]
+    pub tags: Vec<String>,
+    #[serde(default = "unbounded")]
+    pub created: Bounds<NaiveDate>,
+    #[serde(default = "unbounded")]
+    pub updated: Bounds<NaiveDate>,
+    #[serde(default)]
+    pub title_filter: Option<String>,
+    #[serde(default)]
+    pub sort_type: SortType,
+}
+
+impl Default for Search {
+    fn default() -> Self {
+        Self {
+            search_path: Default::default(),
+            tags: Default::default(),
+            created: (Bound::Unbounded, Bound::Unbounded),
+            updated: (Bound::Unbounded, Bound::Unbounded),
+            title_filter: Default::default(),
+            sort_type: Default::default(),
+            exclude_paths: vec![],
+        }
+    }
+}
+
+#[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct Article {
     pub content: String,
     pub meta: ArticleMeta,
@@ -153,10 +265,11 @@ pub struct Article {
 impl Article {
     pub async fn render(
         path: &Path,
-        article_mgr: &ArticleManager,
+        article_manager: Arc<ArticleManager>,
     ) -> Result<Self, error::ArticleError> {
+        let path = path.to_path_buf();
         let pandoc_ast = rocket::tokio::task::spawn_blocking({
-            let path = path.to_path_buf();
+            let path = path.clone();
             move || -> Result<_, error::ArticleError> {
                 let pandoc = Command::new("pandoc")
                     .args(["-f", "markdown", "-t", "json"])
@@ -175,12 +288,11 @@ impl Article {
             }
         })
         .await??;
-        let mut pandoc_ast =
+        let pandoc_ast =
             rocket::tokio::task::spawn_blocking(move || Pandoc::from_json(&pandoc_ast)).await?;
 
-        for filter in filters::FILTERS {
-            filter(&mut pandoc_ast, article_mgr);
-        }
+        let pandoc_ast = apply_filters(Arc::new(path), pandoc_ast, article_manager).await;
+
         fn pandoc_inline_to_string(i: &Inline) -> &str {
             match i {
                 pandoc_ast::Inline::Str(s) => s.as_str(),
@@ -268,7 +380,7 @@ impl Article {
 const DEFAULT_TITLE: &dyn Fn() -> String = &|| "Untitled Page".to_string();
 const DEFAULT_TEMPLATE: &dyn Fn() -> String = &|| "article".to_string();
 
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct ArticleMeta {
     #[serde(default = "DEFAULT_TITLE")]
     pub title: String,
@@ -290,11 +402,13 @@ pub struct ArticleMeta {
     pub created: NaiveDate,
     #[serde(default)]
     pub ready: bool,
+    #[serde(default)]
+    pub always_rerender: bool,
     #[serde(flatten)]
     pub extra: Value,
 }
 
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub enum Toc {
     Text(String),
     Heading {
@@ -365,7 +479,7 @@ impl From<&Article> for Template {
             article.meta.template.clone(),
             context! {
                 toc: article.meta.toc.iter().map(ToString::to_string).collect::<String>(),
-                meta: &article.meta,
+                meta: &dbg!(&article).meta,
                 content: &article.content,
             },
         )

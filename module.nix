@@ -45,6 +45,14 @@ in {
       '';
     };
 
+    fragmentsDir = mkOption {
+      type = types.str;
+      default = builtins.toString (path2derivation ./fragments);
+      description = ''
+        The directory where the wolog reads its fragments.
+      '';
+    };
+
     staticDir = mkOption {
       type = types.path;
       default = builtins.toString (path2derivation ./static);
@@ -103,6 +111,7 @@ in {
         ln -s ${settings} $out/Rocket.toml
         ln -s ${cfg.articlesDir} $out/articles
         ln -s ${cfg.templatesDir} $out/templates
+        ln -s ${cfg.fragmentsDir} $out/fragments
         ln -s ${cfg.staticDir} $out/static
       '';
     };

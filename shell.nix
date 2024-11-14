@@ -4,5 +4,6 @@ with pkgs;
     buildInputs = [
       sqlx-cli
       openssl
+      rustup
     ];
   }
