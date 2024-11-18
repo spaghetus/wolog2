@@ -1,7 +1,4 @@
-{% extends "main" %}
-
-{% block toc %}
-{% endblock toc %}
+{% extends "article" %}
 
 {% block license %}
 <p xmlns:cc="http://creativecommons.org/ns#"
@@ -20,26 +17,27 @@
 </p>
 {% endblock license %}
 
-{% block head %}
-<title>Home</title>
-{% endblock head %}
-
-{% block bodyprops %}
-typeof="Blog"
-{% endblock bodyprops %}
-
 {% block main %}
 <main>
-    <h1 property="name">the wolog</h1>
-
+    <header>
+        <h1 property="name">{{meta.title}}</h1>
+        <div hidden="true"
+            property="abstract">{{meta.blurb}}</div>
+        <span property="keywords"
+            hidden="true">{{meta.tags | join(sep=",")}}</span>
+    </header>
     {{ content | safe }}
-
-    <h2>Recent articles</h2>
-
-    <div class="cards">
-        {% for article in articles %}
-        {{ macros::article_card(path=article[0], meta=article[1], property="blogPost") }}
-        {% endfor %}
-    </div>
+    {% if meta.tags %}
+    <hr>
+    <footer>
+        <ul class="horizontal">
+            Filed under
+            {% for tag in meta.tags %}
+            <li><a href="/tags?tags={{tag}}"
+                    property="isPartOf">#{{tag}}</a></li>
+            {% endfor %}
+        </ul>
+    </footer>
+    {% endif %}
 </main>
 {% endblock main %}

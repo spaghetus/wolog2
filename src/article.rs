@@ -1,5 +1,5 @@
 use async_recursion::async_recursion;
-use chrono::{DateTime, Local, NaiveDate};
+use chrono::{DateTime, Local, Months, NaiveDate};
 use dashmap::DashMap;
 use error::ArticleError;
 use pandoc_ast::{Block, Inline, MetaValue, Pandoc};
@@ -8,6 +8,7 @@ use rocket::{
     http::uri::{error::PathError, Segments},
     request::FromSegments,
     response::Responder,
+    time::format_description::modifier::Month,
     tokio::{sync::RwLock, task::JoinError},
 };
 use rocket_dyn_templates::{context, Template};
@@ -24,7 +25,8 @@ use std::{
     str::FromStr,
     string::FromUtf8Error,
     sync::Arc,
-    time::{Duration, Instant, SystemTime},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+    usize,
 };
 use strum::EnumString;
 
@@ -59,18 +61,38 @@ impl ArticleManager {
         let disk_time = meta.as_ref().and_then(|m| m.modified().ok());
         if let Some(existing) = &existing {
             let cached_time = existing.value().1;
-            if disk_time
-                .map(|disk_time| disk_time <= cached_time)
-                .unwrap_or(true)
-                && !existing.0.meta.always_rerender
+            if cached_time == UNIX_EPOCH
+                || (disk_time
+                    .map(|disk_time| disk_time <= cached_time)
+                    .unwrap_or(true)
+                    && !existing.0.meta.always_rerender)
             {
                 return Ok(existing.value().0.clone());
             }
         }
-        let Ok(mut new_article) = Article::render(path, self.clone())
+        std::mem::drop(existing);
+        dbg!(&path);
+        {
+            // Ensure that we don't try to rebuild this article again in a recursive evaluation
+            let mut old_article = self.articles.entry(path.to_path_buf()).or_insert_with(|| {
+                (
+                    Arc::new(Article {
+                        content: String::new(),
+                        meta: ArticleMeta {
+                            title: path.to_string_lossy().to_string(),
+                            ..Default::default()
+                        },
+                    }),
+                    SystemTime::now(),
+                )
+            });
+            old_article.value_mut().1 = SystemTime::UNIX_EPOCH;
+        }
+        let new_article = Article::render(path, self.clone())
             .await
-            .inspect_err(|e| eprintln!("Article {path:?} failed with {e:#?}"))
-        else {
+            .inspect_err(|e| eprintln!("Article {path:?} failed with {e:#?}"));
+        let existing = self.articles.get(path);
+        let Ok(mut new_article) = new_article else {
             if let Some(existing) = &existing {
                 return Ok(existing.value().0.clone());
             } else {
@@ -109,7 +131,6 @@ impl ArticleManager {
     pub async fn get_all_articles(
         self: Arc<Self>,
         path: &Path,
-        exclude_paths: &[PathBuf],
     ) -> Result<HashMap<PathBuf, ArticleMeta>, ArticleError> {
         use rocket::tokio::fs;
         let mut children = fs::read_dir(path).await?;
@@ -127,12 +148,9 @@ impl ArticleManager {
             eprintln!("Doing full search");
             while let Some(child) = children.next_entry().await? {
                 let path = child.path();
-                if exclude_paths.iter().any(|p| path.starts_with(p)) {
-                    continue;
-                }
                 if child.file_type().await.unwrap().is_dir() {
                     self.clone()
-                        .get_all_articles(&path, exclude_paths)
+                        .get_all_articles(&path)
                         .await
                         .unwrap_or_default()
                         .drain()
@@ -159,16 +177,14 @@ impl ArticleManager {
         search: &Search,
     ) -> Result<Vec<(PathBuf, ArticleMeta)>, ArticleError> {
         let articles = self
-            .get_all_articles(
-                &Path::new("./articles").join(&search.search_path),
-                &search.exclude_paths,
-            )
+            .get_all_articles(&Path::new("articles").join(&search.search_path))
             .await?;
         let mut articles: Vec<_> = articles
             .into_iter()
             .filter(|(_, article)| {
                 search.created.contains(&article.created)
                     && search.updated.contains(&article.updated)
+                    && !article.hidden
                     && search.tags.iter().all(|t| article.tags.contains(t))
                     && article
                         .title
@@ -176,6 +192,7 @@ impl ArticleManager {
             })
             .collect();
         articles.sort_by(search.sort_type.sort_fn());
+        articles.truncate(search.limit.unwrap_or(usize::MAX));
         Ok(articles)
     }
 }
@@ -240,6 +257,8 @@ pub struct Search {
     pub title_filter: Option<String>,
     #[serde(default)]
     pub sort_type: SortType,
+    #[serde(default)]
+    pub limit: Option<usize>,
 }
 
 impl Default for Search {
@@ -252,6 +271,7 @@ impl Default for Search {
             title_filter: Default::default(),
             sort_type: Default::default(),
             exclude_paths: vec![],
+            limit: None,
         }
     }
 }
@@ -380,7 +400,7 @@ impl Article {
 const DEFAULT_TITLE: &dyn Fn() -> String = &|| "Untitled Page".to_string();
 const DEFAULT_TEMPLATE: &dyn Fn() -> String = &|| "article".to_string();
 
-#[derive(Serialize, Deserialize, Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug, Default)]
 pub struct ArticleMeta {
     #[serde(default = "DEFAULT_TITLE")]
     pub title: String,

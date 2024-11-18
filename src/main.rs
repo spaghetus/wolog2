@@ -63,32 +63,33 @@ async fn force_refresh(article_manager: &State<Arc<ArticleManager>>) -> &'static
 async fn render_homepage(
     article_manager: &State<Arc<ArticleManager>>,
 ) -> Result<Template, ArticleError> {
-    let articles = article_manager
-        .deref()
-        .clone()
-        .get_all_articles(Path::new("./articles"), &[])
-        .await?;
-    let mut articles: Vec<_> = articles
-        .into_iter()
-        .filter(|(_, article)| !article.exclude_from_rss)
-        .collect();
-    articles.sort_by_key(|(_, a)| a.created);
-    articles.reverse();
-    articles = articles.into_iter().take(9).collect();
-    let homepage = article_manager
-        .deref()
-        .clone()
-        .get_article(Path::new("articles/index.md"))
-        .await
-        .ok();
-    let homepage = homepage
-        .as_deref()
-        .map(|a| a.content.as_str())
-        .unwrap_or("Create an article called index.md to populate the homepage");
-    Ok(Template::render(
-        "homepage",
-        context! {articles, content: homepage},
-    ))
+    // let articles = article_manager
+    //     .deref()
+    //     .clone()
+    //     .get_all_articles(Path::new("./articles"), &[])
+    //     .await?;
+    // let mut articles: Vec<_> = articles
+    //     .into_iter()
+    //     .filter(|(_, article)| !article.exclude_from_rss)
+    //     .collect();
+    // articles.sort_by_key(|(_, a)| a.created);
+    // articles.reverse();
+    // articles = articles.into_iter().take(9).collect();
+    // let homepage = article_manager
+    //     .deref()
+    //     .clone()
+    //     .get_article(Path::new("articles/index.md"))
+    //     .await
+    //     .ok();
+    // let homepage = homepage
+    //     .as_deref()
+    //     .map(|a| a.content.as_str())
+    //     .unwrap_or("Create an article called index.md to populate the homepage");
+    // Ok(Template::render(
+    //     "homepage",
+    //     context! {articles, content: homepage},
+    // ))
+    show_article(ArticlePath("articles/index.md".into()), article_manager).await
 }
 
 #[get("/<article..>")]
@@ -314,6 +315,7 @@ async fn search(
             title_filter: title_filter.clone(),
             sort_type,
             exclude_paths: vec![],
+            limit: None,
         })
         .await?;
     Ok(Template::render(
@@ -337,7 +339,7 @@ async fn tags_list(article_manager: &State<Arc<ArticleManager>>) -> Result<Templ
     let articles = article_manager
         .deref()
         .clone()
-        .get_all_articles(Path::new("./articles"), &[])
+        .get_all_articles(Path::new("./articles"))
         .await?;
     let tags: BTreeMap<&str, usize> = articles
         .iter()
