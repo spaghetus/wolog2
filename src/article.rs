@@ -1,5 +1,5 @@
 use async_recursion::async_recursion;
-use chrono::NaiveDate;
+use chrono::{DateTime, Local, NaiveDate};
 use dashmap::{DashMap, DashSet};
 use error::ArticleError;
 use pandoc_ast::{Block, Inline, MetaValue, Pandoc};
@@ -93,7 +93,7 @@ pub async fn get_article(path: &Arc<Path>) -> Result<Arc<Article>, ArticleError>
         .and_then(|m| m.modified())
         .ok();
     let cached = ARTICLE_CACHE.get(path);
-    let cached = cached.as_ref().map(|c| c.value());
+    let cached = cached.as_ref().map(|c| c.value().clone());
     match (disk_modified_time, cached) {
         (None, _) => Err(ArticleError::NoArticle),
         (Some(disk_modified_time), Some(cached)) if cached.rendered_at >= disk_modified_time => {
@@ -101,7 +101,7 @@ pub async fn get_article(path: &Arc<Path>) -> Result<Arc<Article>, ArticleError>
         }
         (Some(_), cached) => match render_article(path).await {
             Ok(article) => Ok(article),
-            Err(e) => cached.cloned().ok_or(e),
+            Err(e) => cached.ok_or(e),
         },
     }
 }
@@ -148,7 +148,7 @@ async fn get_metadata(path: &Arc<Path>) -> Result<(Arc<ArticleMeta>, Arc<Pandoc>
         .await
         .and_then(|m| m.modified())
         .ok();
-    let cached = AST_CACHE.get(path);
+    let cached = AST_CACHE.get(path).map(|v| v.clone());
     match (disk_modified_time, cached) {
         (None, _) => Err(ArticleError::NoArticle),
         (Some(disk_modified_time), Some(cached)) if cached.2 >= disk_modified_time => {
@@ -156,9 +156,7 @@ async fn get_metadata(path: &Arc<Path>) -> Result<(Arc<ArticleMeta>, Arc<Pandoc>
         }
         (Some(_), cached) => match prerender_article(path).await {
             Ok(v) => Ok(v),
-            Err(e) => cached
-                .map(|c| (c.value().0.clone(), c.value().1.clone()))
-                .ok_or(e),
+            Err(e) => cached.map(|c| (c.0.clone(), c.1.clone())).ok_or(e),
         },
     }
 }
@@ -167,11 +165,13 @@ async fn prerender_article(
     path: &Arc<Path>,
 ) -> Result<(Arc<ArticleMeta>, Arc<Pandoc>), ArticleError> {
     if !BUSY_ASTS.insert(path.clone()) {
+        println!("Skipping prerendering {path:?} since we're already working on it");
         return AST_CACHE
             .get(path)
             .map(|a| (a.value().0.clone(), a.value().1.clone()))
             .ok_or(ArticleError::NoArticle);
     }
+    println!("Rendering {path:?}");
     let ast = tokio::task::spawn_blocking({
         let path = path.clone();
         move || -> Result<_, error::ArticleError> {
@@ -195,7 +195,28 @@ async fn prerender_article(
     })
     .await??;
     let ast = Arc::new(apply_filters(path.clone(), ast).await);
-    let meta = Arc::new(ArticleMeta::try_from(&*ast)?);
+    let mut meta = ArticleMeta::try_from(&*ast)?;
+
+    let fsmeta = tokio::fs::metadata(path).await.ok();
+
+    let disk_time = fsmeta
+        .as_ref()
+        .and_then(|m| m.modified().ok())
+        .unwrap_or(SystemTime::now());
+    let created_time = fsmeta
+        .as_ref()
+        .and_then(|m| m.created().ok())
+        .unwrap_or(SystemTime::now());
+
+    if meta.updated == NaiveDate::default() {
+        meta.updated = DateTime::<Local>::from(disk_time).date_naive();
+    }
+    if meta.created == NaiveDate::default() {
+        meta.created = DateTime::<Local>::from(created_time).date_naive();
+    }
+
+    let meta = Arc::new(meta);
+
     AST_CACHE.insert(path.clone(), (meta.clone(), ast.clone(), SystemTime::now()));
     BUSY_ASTS.remove(path);
     Ok((meta, ast))
