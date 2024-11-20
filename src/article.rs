@@ -96,7 +96,7 @@ pub async fn get_article(path: &Arc<Path>) -> Result<Arc<Article>, ArticleError>
     match (disk_modified_time, cached) {
         (None, _) => Err(ArticleError::NoArticle),
         (Some(disk_modified_time), Some(cached))
-            if cached.rendered_at >= disk_modified_time || cached.meta.always_rerender =>
+            if cached.rendered_at >= disk_modified_time && !cached.meta.always_rerender =>
         {
             Ok(cached.clone())
         }
@@ -152,7 +152,9 @@ async fn get_metadata(path: &Arc<Path>) -> Result<(Arc<ArticleMeta>, Arc<Pandoc>
     let cached = AST_CACHE.get(path).map(|v| v.clone());
     match (disk_modified_time, cached) {
         (None, _) => Err(ArticleError::NoArticle),
-        (Some(disk_modified_time), Some(cached)) if cached.2 >= disk_modified_time => {
+        (Some(disk_modified_time), Some(cached))
+            if cached.2 >= disk_modified_time && !cached.0.always_rerender =>
+        {
             Ok((cached.0.clone(), cached.1.clone()))
         }
         (Some(_), cached) => match prerender_article(path).await {
