@@ -115,7 +115,7 @@ async fn render_article(path: &Arc<Path>) -> Result<Arc<Article>, ArticleError> 
     let content = rocket::tokio::task::spawn_blocking({
         move || -> Result<_, error::ArticleError> {
             let mut pandoc = Command::new("pandoc")
-                .args(["-f", "json", "-t", "html"])
+                .args(["-f", "json", "-t", "html", "--mathml"])
                 .stdin(Stdio::piped())
                 .stdout(Stdio::piped())
                 .spawn()?;
