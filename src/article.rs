@@ -472,7 +472,7 @@ impl<'r> FromSegments<'r> for ArticlePath {
         let path = segments
             .to_path_buf(false)
             .map_err(error::ArticleError::MalformedPath)?;
-        let mut path = Path::new("./articles").join(path);
+        let mut path = Path::new("articles").join(path);
         path.set_extension("md");
         if !path.exists() {
             return Err(error::ArticleError::NotMarkdown);
