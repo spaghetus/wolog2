@@ -1,5 +1,5 @@
-use article::{error::ArticleError, ArticleManager, ArticlePath};
-use article::{ArticleMeta, Bounds, Search, SortType};
+use article::{error::ArticleError, ArticlePath};
+use article::{Article, ArticleMeta, Bounds, Search, SortType};
 use atom_syndication::{Category, Content, Entry, Generator, Link, Person, Text};
 use chrono::{
     Date, DateTime, Days, Duration, FixedOffset, Local, NaiveDate, NaiveDateTime, NaiveTime,
@@ -12,6 +12,7 @@ use rocket::http::{ContentType, HeaderMap, Status};
 use rocket::request::{FromParam, FromRequest, FromSegments, Outcome};
 use rocket::response::Responder;
 use rocket::serde::json::Json;
+use rocket::tokio::runtime::{Handle, Runtime};
 use rocket::{fs::FileServer, Rocket};
 use rocket::{tokio, State};
 use rocket_dyn_templates::{context, Template};
@@ -33,11 +34,10 @@ extern crate rocket;
 async fn main() {
     Rocket::build()
         .attach(Template::fairing())
-        .manage(Arc::new(ArticleManager::default()))
+        // .manage(Arc::new(ArticleManager::default()))
         .mount(
             "/",
             routes![
-                force_refresh,
                 show_article,
                 render_homepage,
                 search,
@@ -53,56 +53,15 @@ async fn main() {
         .expect("Rocket failed");
 }
 
-#[get("/force-refresh")]
-async fn force_refresh(article_manager: &State<Arc<ArticleManager>>) -> &'static str {
-    article_manager.deref().clone().force_rescan().await;
-    "OK"
-}
-
 #[get("/")]
-async fn render_homepage(
-    article_manager: &State<Arc<ArticleManager>>,
-) -> Result<Template, ArticleError> {
-    // let articles = article_manager
-    //     .deref()
-    //     .clone()
-    //     .get_all_articles(Path::new("./articles"), &[])
-    //     .await?;
-    // let mut articles: Vec<_> = articles
-    //     .into_iter()
-    //     .filter(|(_, article)| !article.exclude_from_rss)
-    //     .collect();
-    // articles.sort_by_key(|(_, a)| a.created);
-    // articles.reverse();
-    // articles = articles.into_iter().take(9).collect();
-    // let homepage = article_manager
-    //     .deref()
-    //     .clone()
-    //     .get_article(Path::new("articles/index.md"))
-    //     .await
-    //     .ok();
-    // let homepage = homepage
-    //     .as_deref()
-    //     .map(|a| a.content.as_str())
-    //     .unwrap_or("Create an article called index.md to populate the homepage");
-    // Ok(Template::render(
-    //     "homepage",
-    //     context! {articles, content: homepage},
-    // ))
-    show_article(ArticlePath("articles/index.md".into()), article_manager).await
+async fn render_homepage() -> Result<Template, ArticleError> {
+    show_article(ArticlePath("articles/index.md".into())).await
 }
 
 #[get("/<article..>")]
-async fn show_article(
-    article: ArticlePath,
-    article_manager: &State<Arc<ArticleManager>>,
-) -> Result<Template, ArticleError> {
-    article_manager
-        .deref()
-        .clone()
-        .get_article(&article)
-        .await
-        .map(|a| a.as_ref().into())
+async fn show_article(article: ArticlePath) -> Result<Template, ArticleError> {
+    let article = article::get_article(&article.0.into()).await?;
+    Ok((&*article).into())
 }
 
 pub struct Feed(pub atom_syndication::Feed);
@@ -135,7 +94,6 @@ impl<'r> FromRequest<'r> for ModifiedSince {
 #[get("/feed/<path..>")]
 async fn gen_feed(
     path: PathBuf,
-    article_manager: &State<Arc<ArticleManager>>,
     modified_since: Option<ModifiedSince>,
 ) -> Result<Feed, ArticleError> {
     fn naive_date_to_time(date: NaiveDate) -> DateTime<FixedOffset> {
@@ -155,9 +113,10 @@ async fn gen_feed(
         search_path: path.clone(),
         ..Default::default()
     };
-    let mut search = article_manager.deref().clone().search(&search).await?;
+    let mut search = article::search(&search).await?;
     dbg!(search.len());
     search.retain(|(_, a)| !a.exclude_from_rss);
+    let mut rt = Handle::current();
     let feed = atom_syndication::Feed {
         title: "Willow's blog".into(),
         id: format!("https://wolo.dev/{}", path.to_string_lossy()),
@@ -197,7 +156,14 @@ async fn gen_feed(
         rights: Some("https://creativecommons.org/licenses/by-nc/4.0/".into()),
         entries: search
             .iter()
-            .map(|(p, _)| (p, article_manager.articles.get(p).unwrap().0.clone()))
+            .map(|(p, _)| {
+                (
+                    p,
+                    rt.block_on(article::get_article(p))
+                        .unwrap_or_default()
+                        .clone(),
+                )
+            })
             .map(|(p, a)| Entry {
                 title: a.meta.title.clone().into(),
                 id: p.to_string_lossy().to_string(),
@@ -275,7 +241,6 @@ async fn search(
     created_before: Option<DateField>,
     updated_since: Option<DateField>,
     updated_before: Option<DateField>,
-    article_manager: &State<Arc<ArticleManager>>,
     title_filter: Option<String>,
     sort_type: Option<SortType>,
 ) -> Result<Template, ArticleError> {
@@ -304,20 +269,16 @@ async fn search(
             .unwrap_or(Bound::Unbounded),
     );
     let sort_type = sort_type.unwrap_or_default();
-    let articles = article_manager
-        .deref()
-        .clone()
-        .search(&Search {
-            search_path: search_path.clone(),
-            tags: tags.clone(),
-            created,
-            updated,
-            title_filter: title_filter.clone(),
-            sort_type,
-            exclude_paths: vec![],
-            limit: None,
-        })
-        .await?;
+    let search = Search {
+        search_path: search_path.clone(),
+        title_filter: title_filter.clone(),
+        tags: tags.clone(),
+        sort_type,
+        created,
+        updated,
+        ..Default::default()
+    };
+    let articles = article::search(&search).await?;
     Ok(Template::render(
         "page-list",
         context! {
@@ -335,12 +296,8 @@ async fn search(
 }
 
 #[get("/tags/list")]
-async fn tags_list(article_manager: &State<Arc<ArticleManager>>) -> Result<Template, ArticleError> {
-    let articles = article_manager
-        .deref()
-        .clone()
-        .get_all_articles(Path::new("./articles"))
-        .await?;
+async fn tags_list() -> Result<Template, ArticleError> {
+    let articles = article::search(&Search::default()).await?;
     let tags: BTreeMap<&str, usize> = articles
         .iter()
         .flat_map(|(_, meta)| meta.tags.iter().map(|s| s.as_str()))
@@ -356,25 +313,20 @@ async fn tags_list(article_manager: &State<Arc<ArticleManager>>) -> Result<Templ
     ))
 }
 
-#[allow(clippy::too_many_arguments)]
 #[get("/tags/<search_path..>?<sort_type>&<tags..>")]
 async fn tags(
     search_path: PathBuf,
     tags: Vec<String>,
-    article_manager: &State<Arc<ArticleManager>>,
     sort_type: Option<SortType>,
 ) -> Result<Template, ArticleError> {
     let sort_type = sort_type.unwrap_or_default();
-    let articles = article_manager
-        .deref()
-        .clone()
-        .search(&Search {
-            search_path: search_path.clone(),
-            tags: tags.clone(),
-            sort_type,
-            ..Default::default()
-        })
-        .await?;
+    let articles = article::search(&Search {
+        search_path: search_path.clone(),
+        tags: tags.clone(),
+        sort_type,
+        ..Default::default()
+    })
+    .await?;
     Ok(Template::render(
         "tag-list",
         context! {

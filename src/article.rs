@@ -1,201 +1,210 @@
 use async_recursion::async_recursion;
-use chrono::{DateTime, Local, Months, NaiveDate};
-use dashmap::DashMap;
+use chrono::NaiveDate;
+use dashmap::{DashMap, DashSet};
 use error::ArticleError;
 use pandoc_ast::{Block, Inline, MetaValue, Pandoc};
 use rocket::{
     form::{FromFormField, ValueField},
-    http::uri::{error::PathError, Segments},
+    http::uri::Segments,
     request::FromSegments,
-    response::Responder,
-    time::format_description::modifier::Month,
-    tokio::{sync::RwLock, task::JoinError},
+    tokio::{self, sync::Mutex},
 };
 use rocket_dyn_templates::{context, Template};
 use serde::{Deserialize, Serialize};
 use serde_yml::Value;
 use std::{
-    collections::HashMap,
-    ffi::{OsStr, OsString},
+    ffi::OsStr,
     fmt::Display,
-    io::{Read, Write},
+    io::Write,
     ops::{Bound, Deref, RangeBounds},
     path::{Path, PathBuf},
     process::{Command, Stdio},
     str::FromStr,
-    string::FromUtf8Error,
-    sync::Arc,
-    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
-    usize,
+    sync::{Arc, LazyLock},
+    time::{Duration, Instant, SystemTime},
 };
 use strum::EnumString;
 
-use crate::filters::{self, apply_filters};
+use crate::filters::apply_filters;
 
 pub mod error;
 
-pub struct ArticleManager {
-    pub articles: DashMap<PathBuf, (Arc<Article>, SystemTime)>,
-    pub last_full_scan: RwLock<Instant>,
-}
+static LAST_REAL_SEARCH: LazyLock<tokio::sync::Mutex<Instant>> =
+    LazyLock::new(|| Mutex::new(Instant::now() - Duration::from_secs(3600)));
 
-impl Default for ArticleManager {
-    fn default() -> Self {
-        Self {
-            articles: Default::default(),
-            last_full_scan: RwLock::new(Instant::now() - Duration::from_secs(36000)),
+#[async_recursion]
+async fn find_articles(
+    path: Arc<Path>,
+) -> Result<Vec<(Arc<Path>, Arc<ArticleMeta>)>, ArticleError> {
+    if path.is_file() && path.extension() == Some(OsStr::new("md")) {
+        if let Ok((meta, _)) = get_metadata(&path).await {
+            return Ok(vec![(path.clone(), meta)]);
         }
     }
-}
-
-impl ArticleManager {
-    pub async fn force_rescan(&self) {
-        *self.last_full_scan.write().await = Instant::now() - Duration::from_secs(60 * 60 * 60);
+    if !path.is_dir() {
+        return Ok(vec![]);
     }
-    pub async fn get_article(
-        self: Arc<Self>,
-        path: &Path,
-    ) -> Result<Arc<Article>, error::ArticleError> {
-        let existing = self.articles.get(path);
-        let meta = rocket::tokio::fs::metadata(&path).await.ok();
-        let disk_time = meta.as_ref().and_then(|m| m.modified().ok());
-        if let Some(existing) = &existing {
-            let cached_time = existing.value().1;
-            if cached_time == UNIX_EPOCH
-                || (disk_time
-                    .map(|disk_time| disk_time <= cached_time)
-                    .unwrap_or(true)
-                    && !existing.0.meta.always_rerender)
-            {
-                return Ok(existing.value().0.clone());
-            }
-        }
-        std::mem::drop(existing);
-        dbg!(&path);
-        {
-            // Ensure that we don't try to rebuild this article again in a recursive evaluation
-            let mut old_article = self.articles.entry(path.to_path_buf()).or_insert_with(|| {
-                (
-                    Arc::new(Article {
-                        content: String::new(),
-                        meta: ArticleMeta {
-                            title: path.to_string_lossy().to_string(),
-                            ..Default::default()
-                        },
-                    }),
-                    SystemTime::now(),
-                )
-            });
-            old_article.value_mut().1 = SystemTime::UNIX_EPOCH;
-        }
-        let new_article = Article::render(path, self.clone())
-            .await
-            .inspect_err(|e| eprintln!("Article {path:?} failed with {e:#?}"));
-        let existing = self.articles.get(path);
-        let Ok(mut new_article) = new_article else {
-            if let Some(existing) = &existing {
-                return Ok(existing.value().0.clone());
-            } else {
-                return Err(error::ArticleError::NoArticle);
-            }
+    let mut dir = tokio::fs::read_dir(path).await?;
+    let mut out = vec![];
+    while let Some(child) = dir.next_entry().await? {
+        let Ok(mut child) = find_articles(child.path().into()).await else {
+            continue;
         };
-
-        if !new_article.meta.ready {
-            if let Some(existing) = &existing {
-                return Ok(existing.value().0.clone());
-            } else {
-                return Err(error::ArticleError::NotForPublication);
-            }
-        }
-
-        let disk_time = disk_time.unwrap_or(SystemTime::now());
-        let created_time = meta
-            .as_ref()
-            .and_then(|m| m.created().ok())
-            .unwrap_or(SystemTime::now());
-
-        if new_article.meta.updated == NaiveDate::default() {
-            new_article.meta.updated = DateTime::<Local>::from(disk_time).date_naive();
-        }
-        if new_article.meta.created == NaiveDate::default() {
-            new_article.meta.created = DateTime::<Local>::from(created_time).date_naive();
-        }
-        std::mem::drop(existing);
-        let new_article = Arc::new(new_article);
-        self.articles
-            .insert(path.to_path_buf(), (new_article.clone(), disk_time));
-        Ok(new_article)
+        out.append(&mut child)
     }
+    Ok(out)
+}
 
-    #[async_recursion]
-    pub async fn get_all_articles(
-        self: Arc<Self>,
-        path: &Path,
-    ) -> Result<HashMap<PathBuf, ArticleMeta>, ArticleError> {
-        use rocket::tokio::fs;
-        let mut children = fs::read_dir(path).await?;
-
-        let mut out: HashMap<PathBuf, ArticleMeta> = self
-            .articles
+pub async fn search(search: &Search) -> Result<Vec<(Arc<Path>, Arc<ArticleMeta>)>, ArticleError> {
+    let mut search_time = LAST_REAL_SEARCH.lock().await;
+    let mut articles = if search_time.elapsed() > Duration::from_secs(1800) {
+        println!("Do full search");
+        *search_time = Instant::now();
+        std::mem::drop(search_time);
+        find_articles(Path::new("articles").into()).await?
+    } else {
+        std::mem::drop(search_time);
+        AST_CACHE
             .iter()
-            .filter(|pair| !pair.value().0.meta.hidden)
-            .filter(|pair| pair.key().starts_with(path))
-            .map(|pair| (pair.key().clone(), pair.value().0.meta.clone()))
-            .collect();
-        let md = OsString::from_str("md").unwrap();
+            .map(|kv| (kv.key().clone(), kv.value().0.clone()))
+            .collect()
+    };
+    articles.retain(|(_, article)| {
+        search.created.contains(&article.created)
+            && search.updated.contains(&article.updated)
+            && !article.hidden
+            && search.tags.iter().all(|t| article.tags.contains(t))
+            && article
+                .title
+                .contains(search.title_filter.as_deref().unwrap_or(""))
+    });
+    let sort = search.sort_type.sort_fn();
+    articles.sort_by(|a, b| (sort)(&(&*a.0, &*a.1), &(&*b.0, &*b.1)));
+    articles = articles
+        .into_iter()
+        .map(|(p, a)| (p.strip_prefix("articles").unwrap_or(&p).into(), a))
+        .collect();
+    Ok(articles)
+}
 
-        if (Instant::now() - *self.last_full_scan.read().await) > Duration::from_secs(30 * 60) {
-            eprintln!("Doing full search");
-            while let Some(child) = children.next_entry().await? {
-                let path = child.path();
-                if child.file_type().await.unwrap().is_dir() {
-                    self.clone()
-                        .get_all_articles(&path)
-                        .await
-                        .unwrap_or_default()
-                        .drain()
-                        .filter(|(_, a)| !a.hidden)
-                        .for_each(|(key, value)| {
-                            out.insert(key, value);
-                        })
-                } else if path.extension() == Some(&md) {
-                    if let Ok(article) = self.clone().get_article(&path).await {
-                        out.insert(path, article.meta.clone());
-                    };
-                }
-            }
-            if path == Path::new("./articles") {
-                *self.last_full_scan.write().await = Instant::now();
-            }
+pub async fn get_article(path: &Arc<Path>) -> Result<Arc<Article>, ArticleError> {
+    let disk_modified_time = tokio::fs::metadata(&path)
+        .await
+        .and_then(|m| m.modified())
+        .ok();
+    let cached = ARTICLE_CACHE.get(path);
+    let cached = cached.as_ref().map(|c| c.value());
+    match (disk_modified_time, cached) {
+        (None, _) => Err(ArticleError::NoArticle),
+        (Some(disk_modified_time), Some(cached)) if cached.rendered_at >= disk_modified_time => {
+            Ok(cached.clone())
         }
-
-        Ok(out)
-    }
-
-    pub async fn search(
-        self: Arc<Self>,
-        search: &Search,
-    ) -> Result<Vec<(PathBuf, ArticleMeta)>, ArticleError> {
-        let articles = self
-            .get_all_articles(&Path::new("articles").join(&search.search_path))
-            .await?;
-        let mut articles: Vec<_> = articles
-            .into_iter()
-            .filter(|(_, article)| {
-                search.created.contains(&article.created)
-                    && search.updated.contains(&article.updated)
-                    && !article.hidden
-                    && search.tags.iter().all(|t| article.tags.contains(t))
-                    && article
-                        .title
-                        .contains(search.title_filter.as_deref().unwrap_or(""))
-            })
-            .collect();
-        articles.sort_by(search.sort_type.sort_fn());
-        articles.truncate(search.limit.unwrap_or(usize::MAX));
-        Ok(articles)
+        (Some(_), cached) => match render_article(path).await {
+            Ok(article) => Ok(article),
+            Err(e) => cached.cloned().ok_or(e),
+        },
     }
 }
+
+async fn render_article(path: &Arc<Path>) -> Result<Arc<Article>, ArticleError> {
+    let (meta, ast) = get_metadata(path).await?;
+
+    let ast = ast.to_json();
+
+    let content = rocket::tokio::task::spawn_blocking({
+        move || -> Result<_, error::ArticleError> {
+            let mut pandoc = Command::new("pandoc")
+                .args(["-f", "json", "-t", "html"])
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .spawn()?;
+
+            pandoc.stdin.as_mut().unwrap().write_all(ast.as_bytes())?;
+            let pandoc = pandoc.wait_with_output()?;
+
+            if !pandoc.status.success() {
+                return Err(error::ArticleError::PandocFailed(String::from_utf8(
+                    pandoc.stdout,
+                )?));
+            }
+
+            Ok(String::from_utf8(pandoc.stdout)?)
+        }
+    })
+    .await??;
+
+    let article = Arc::new(Article {
+        content,
+        meta: meta.clone(),
+        rendered_at: SystemTime::now(),
+    });
+    ARTICLE_CACHE.insert(path.clone(), article.clone());
+
+    Ok(article)
+}
+
+async fn get_metadata(path: &Arc<Path>) -> Result<(Arc<ArticleMeta>, Arc<Pandoc>), ArticleError> {
+    let disk_modified_time = tokio::fs::metadata(&path)
+        .await
+        .and_then(|m| m.modified())
+        .ok();
+    let cached = AST_CACHE.get(path);
+    match (disk_modified_time, cached) {
+        (None, _) => Err(ArticleError::NoArticle),
+        (Some(disk_modified_time), Some(cached)) if cached.2 >= disk_modified_time => {
+            Ok((cached.0.clone(), cached.1.clone()))
+        }
+        (Some(_), cached) => match prerender_article(path).await {
+            Ok(v) => Ok(v),
+            Err(e) => cached
+                .map(|c| (c.value().0.clone(), c.value().1.clone()))
+                .ok_or(e),
+        },
+    }
+}
+
+async fn prerender_article(
+    path: &Arc<Path>,
+) -> Result<(Arc<ArticleMeta>, Arc<Pandoc>), ArticleError> {
+    if !BUSY_ASTS.insert(path.clone()) {
+        return AST_CACHE
+            .get(path)
+            .map(|a| (a.value().0.clone(), a.value().1.clone()))
+            .ok_or(ArticleError::NoArticle);
+    }
+    let ast = tokio::task::spawn_blocking({
+        let path = path.clone();
+        move || -> Result<_, error::ArticleError> {
+            let pandoc = Command::new("pandoc")
+                .args(["-f", "markdown", "-t", "json"])
+                .arg(path.as_os_str())
+                .stdin(Stdio::null())
+                .stdout(Stdio::piped())
+                .output()?;
+
+            if !pandoc.status.success() {
+                return Err(error::ArticleError::PandocFailed(String::from_utf8(
+                    pandoc.stdout,
+                )?));
+            }
+
+            let ast = String::from_utf8(pandoc.stdout)?;
+            let ast = Pandoc::from_json(&ast);
+            Ok(ast)
+        }
+    })
+    .await??;
+    let ast = Arc::new(apply_filters(path.clone(), ast).await);
+    let meta = Arc::new(ArticleMeta::try_from(&*ast)?);
+    AST_CACHE.insert(path.clone(), (meta.clone(), ast.clone(), SystemTime::now()));
+    BUSY_ASTS.remove(path);
+    Ok((meta, ast))
+}
+
+static ARTICLE_CACHE: LazyLock<DashMap<Arc<Path>, Arc<Article>>> = LazyLock::new(DashMap::new);
+static AST_CACHE: LazyLock<DashMap<Arc<Path>, (Arc<ArticleMeta>, Arc<Pandoc>, SystemTime)>> =
+    LazyLock::new(DashMap::new);
+static BUSY_ASTS: LazyLock<DashSet<Arc<Path>>> = LazyLock::new(DashSet::new);
 
 pub type Bounds<B> = (Bound<B>, Bound<B>);
 
@@ -229,7 +238,7 @@ impl<'r> FromFormField<'r> for SortType {
 impl SortType {
     pub fn sort_fn(
         &self,
-    ) -> &dyn Fn(&(PathBuf, ArticleMeta), &(PathBuf, ArticleMeta)) -> std::cmp::Ordering {
+    ) -> &dyn Fn(&(&Path, &ArticleMeta), &(&Path, &ArticleMeta)) -> std::cmp::Ordering {
         match self {
             SortType::CreateAsc => &|(_, l), (_, r)| l.created.cmp(&r.created),
             SortType::CreateDesc => &|(_, l), (_, r)| r.created.cmp(&l.created),
@@ -279,40 +288,55 @@ impl Default for Search {
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct Article {
     pub content: String,
-    pub meta: ArticleMeta,
+    pub meta: Arc<ArticleMeta>,
+    pub rendered_at: SystemTime,
 }
 
-impl Article {
-    pub async fn render(
-        path: &Path,
-        article_manager: Arc<ArticleManager>,
-    ) -> Result<Self, error::ArticleError> {
-        let path = path.to_path_buf();
-        let pandoc_ast = rocket::tokio::task::spawn_blocking({
-            let path = path.clone();
-            move || -> Result<_, error::ArticleError> {
-                let pandoc = Command::new("pandoc")
-                    .args(["-f", "markdown", "-t", "json"])
-                    .arg(path)
-                    .stdin(Stdio::null())
-                    .stdout(Stdio::piped())
-                    .output()?;
+impl Default for Article {
+    fn default() -> Self {
+        Self {
+            content: Default::default(),
+            meta: Default::default(),
+            rendered_at: SystemTime::now(),
+        }
+    }
+}
 
-                if !pandoc.status.success() {
-                    return Err(error::ArticleError::PandocFailed(String::from_utf8(
-                        pandoc.stdout,
-                    )?));
-                }
+const DEFAULT_TITLE: &dyn Fn() -> String = &|| "Untitled Page".to_string();
+const DEFAULT_TEMPLATE: &dyn Fn() -> String = &|| "article".to_string();
 
-                Ok(String::from_utf8(pandoc.stdout)?)
-            }
-        })
-        .await??;
-        let pandoc_ast =
-            rocket::tokio::task::spawn_blocking(move || Pandoc::from_json(&pandoc_ast)).await?;
+#[derive(Serialize, Deserialize, Clone, Debug, Default)]
+pub struct ArticleMeta {
+    #[serde(default = "DEFAULT_TITLE")]
+    pub title: String,
+    #[serde(default)]
+    pub blurb: String,
+    #[serde(default)]
+    pub tags: Vec<String>,
+    #[serde(default = "DEFAULT_TEMPLATE")]
+    pub template: String,
+    #[serde(default)]
+    pub toc: Vec<Toc>,
+    #[serde(default)]
+    pub exclude_from_rss: bool,
+    #[serde(default)]
+    pub hidden: bool,
+    #[serde(default)]
+    pub updated: NaiveDate,
+    #[serde(default)]
+    pub created: NaiveDate,
+    #[serde(default)]
+    pub ready: bool,
+    #[serde(default)]
+    pub always_rerender: bool,
+    #[serde(flatten)]
+    pub extra: Value,
+}
 
-        let pandoc_ast = apply_filters(Arc::new(path), pandoc_ast, article_manager).await;
+impl<'a> TryFrom<&Pandoc> for ArticleMeta {
+    type Error = ArticleError;
 
+    fn try_from(pandoc_ast: &Pandoc) -> Result<Self, Self::Error> {
         fn pandoc_inline_to_string(i: &Inline) -> &str {
             match i {
                 pandoc_ast::Inline::Str(s) => s.as_str(),
@@ -364,68 +388,8 @@ impl Article {
             .collect();
         let meta = serde_json::Value::Object(meta);
         let meta: ArticleMeta = serde_json::from_value(meta)?;
-
-        let pandoc_ast = pandoc_ast.to_json();
-
-        let content = rocket::tokio::task::spawn_blocking({
-            move || -> Result<_, error::ArticleError> {
-                let mut pandoc = Command::new("pandoc")
-                    .args(["-f", "json", "-t", "html"])
-                    .stdin(Stdio::piped())
-                    .stdout(Stdio::piped())
-                    .spawn()?;
-
-                pandoc
-                    .stdin
-                    .as_mut()
-                    .unwrap()
-                    .write_all(pandoc_ast.as_bytes())?;
-                let pandoc = pandoc.wait_with_output()?;
-
-                if !pandoc.status.success() {
-                    return Err(error::ArticleError::PandocFailed(String::from_utf8(
-                        pandoc.stdout,
-                    )?));
-                }
-
-                Ok(String::from_utf8(pandoc.stdout)?)
-            }
-        })
-        .await??;
-
-        Ok(Article { content, meta })
+        Ok(meta)
     }
-}
-
-const DEFAULT_TITLE: &dyn Fn() -> String = &|| "Untitled Page".to_string();
-const DEFAULT_TEMPLATE: &dyn Fn() -> String = &|| "article".to_string();
-
-#[derive(Serialize, Deserialize, Clone, Debug, Default)]
-pub struct ArticleMeta {
-    #[serde(default = "DEFAULT_TITLE")]
-    pub title: String,
-    #[serde(default)]
-    pub blurb: String,
-    #[serde(default)]
-    pub tags: Vec<String>,
-    #[serde(default = "DEFAULT_TEMPLATE")]
-    pub template: String,
-    #[serde(default)]
-    pub toc: Vec<Toc>,
-    #[serde(default)]
-    pub exclude_from_rss: bool,
-    #[serde(default)]
-    pub hidden: bool,
-    #[serde(default)]
-    pub updated: NaiveDate,
-    #[serde(default)]
-    pub created: NaiveDate,
-    #[serde(default)]
-    pub ready: bool,
-    #[serde(default)]
-    pub always_rerender: bool,
-    #[serde(flatten)]
-    pub extra: Value,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -499,7 +463,7 @@ impl From<&Article> for Template {
             article.meta.template.clone(),
             context! {
                 toc: article.meta.toc.iter().map(ToString::to_string).collect::<String>(),
-                meta: &dbg!(&article).meta,
+                meta: &article.meta,
                 content: &article.content,
             },
         )
