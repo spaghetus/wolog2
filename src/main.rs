@@ -117,6 +117,13 @@ async fn gen_feed(
     dbg!(search.len());
     search.retain(|(_, a)| !a.exclude_from_rss);
     let mut rt = Handle::current();
+    let search = {
+        let mut new = vec![];
+        for (path, meta) in search {
+            new.push((path.clone(), article::get_article(&path).await?));
+        }
+        new
+    };
     let feed = atom_syndication::Feed {
         title: "Willow's blog".into(),
         id: format!("https://wolo.dev/{}", path.to_string_lossy()),
@@ -124,7 +131,7 @@ async fn gen_feed(
         updated: naive_date_to_time(
             search
                 .iter()
-                .map(|(_, a)| a.updated)
+                .map(|(_, a)| a.meta.updated)
                 .max()
                 .unwrap_or_default(),
         ),
@@ -135,7 +142,7 @@ async fn gen_feed(
         }],
         categories: search
             .iter()
-            .flat_map(|(_, a)| a.tags.as_slice())
+            .flat_map(|(_, a)| a.meta.tags.as_slice())
             .collect::<HashSet<_>>()
             .into_iter()
             .map(|t| Category {
@@ -156,14 +163,6 @@ async fn gen_feed(
         rights: Some("https://creativecommons.org/licenses/by-nc/4.0/".into()),
         entries: search
             .iter()
-            .map(|(p, _)| {
-                (
-                    p,
-                    rt.block_on(article::get_article(p))
-                        .unwrap_or_default()
-                        .clone(),
-                )
-            })
             .map(|(p, a)| Entry {
                 title: a.meta.title.clone().into(),
                 id: p.to_string_lossy().to_string(),
