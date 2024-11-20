@@ -95,7 +95,9 @@ pub async fn get_article(path: &Arc<Path>) -> Result<Arc<Article>, ArticleError>
     let cached = ARTICLE_CACHE.get(path).map(|c| c.value().clone());
     match (disk_modified_time, cached) {
         (None, _) => Err(ArticleError::NoArticle),
-        (Some(disk_modified_time), Some(cached)) if cached.rendered_at >= disk_modified_time => {
+        (Some(disk_modified_time), Some(cached))
+            if cached.rendered_at >= disk_modified_time || cached.meta.always_rerender =>
+        {
             Ok(cached.clone())
         }
         (Some(_), cached) => match render_article(path).await {
