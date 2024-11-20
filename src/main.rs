@@ -120,7 +120,10 @@ async fn gen_feed(
     let search = {
         let mut new = vec![];
         for (path, meta) in search {
-            new.push((path.clone(), article::get_article(&path).await?));
+            let Ok(article) = article::get_article(&path).await else {
+                continue;
+            };
+            new.push((path.clone(), article));
         }
         new
     };
