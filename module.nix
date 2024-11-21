@@ -130,7 +130,7 @@ in {
 
         path = [pkgs.pandoc];
         environment = {
-          DATABASE_URL = "sqlite:${config.services.wolog.db-path}";
+          DATABASE_URL = "sqlite:${config.services.wolog.db-path}/wolog.db";
         };
 
         serviceConfig = {
