@@ -1,0 +1,20 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT from_url FROM received_mentions WHERE to_path = $1",
+  "describe": {
+    "columns": [
+      {
+        "name": "from_url",
+        "ordinal": 0,
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "99587db64dfa7005ca753a21c0ed08c87adbb752f7b9b5fbf60fa76ede9a9b8f"
+}

@@ -2,6 +2,8 @@
 
 {% block head %}
 <title>{{meta.title}}</title>
+<link href="/webmention"
+    rel="webmention" />
 {% endblock head %}
 
 {% block toc %}
@@ -44,6 +46,16 @@ typeof="BlogPosting"
                 datetime="{{meta.created}}">{{meta.created}}</time>{% if meta.created != meta.updated %}; updated <time property="dateModified"
                 datetime="{{meta.updated}}">{{meta.updated}}{% endif %}.
         </p>
+        {% if meta.mentioners | length > 0 %}
+        <hr>
+        {{ meta.mentioners | length }} backlink(s) found by WebMention:
+        <ul>
+            {% for backlink in meta.mentioners %}
+            <li><a href="{{backlink}}"
+                    rel="nofollow">{{backlink}}</a></li>
+            {% endfor %}
+        </ul>
+        {% endif %}
     </footer>
 </main>
 {% endblock main %}

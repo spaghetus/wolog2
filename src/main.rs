@@ -6,7 +6,7 @@ use chrono::{
     TimeZone, Utc,
 };
 use pandoc_ast::Map;
-use rocket::form::{FromFormField, ValueField};
+use rocket::form::{Form, FromFormField, ValueField};
 use rocket::http::hyper::Request;
 use rocket::http::{ContentType, HeaderMap, Status};
 use rocket::request::{FromParam, FromRequest, FromSegments, Outcome};
@@ -22,10 +22,15 @@ use std::default;
 use std::ops::{Bound, Deref, RangeBounds};
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, LazyLock, RwLock};
 
 mod article;
+mod db;
 mod filters;
+
+static WOLOG_URL: LazyLock<String> = LazyLock::new(|| {
+    dbg!(std::env::var("WOLOG_URL").unwrap_or_else(|_| "https://wolo.dev/".to_string()))
+});
 
 #[macro_use]
 extern crate rocket;
@@ -43,7 +48,8 @@ async fn main() {
                 search,
                 tags,
                 tags_list,
-                gen_feed
+                gen_feed,
+                mention
             ],
         )
         .mount("/assets", FileServer::from("./articles/assets"))
@@ -338,4 +344,23 @@ async fn tags(
             articles
         },
     ))
+}
+
+#[derive(FromForm)]
+struct WebMention {
+    pub source: String,
+    pub target: String,
+}
+
+#[post("/webmention", data = "<webmention>")]
+async fn mention(webmention: Form<WebMention>) -> Status {
+    let Some(target) = webmention.target.strip_prefix(&*WOLOG_URL) else {
+        return Status::BadRequest;
+    };
+    let target = target.trim_start_matches("/");
+    tokio::spawn(db::received_webmention(
+        webmention.source.clone(),
+        target.to_string(),
+    ));
+    Status::Accepted
 }

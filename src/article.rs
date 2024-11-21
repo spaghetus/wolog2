@@ -25,7 +25,7 @@ use std::{
 };
 use strum::EnumString;
 
-use crate::filters::apply_filters;
+use crate::{db, filters::apply_filters};
 
 pub mod error;
 
@@ -88,27 +88,15 @@ pub async fn search(search: &Search) -> Result<Vec<(Arc<Path>, Arc<ArticleMeta>)
 }
 
 pub async fn get_article(path: &Arc<Path>) -> Result<Arc<Article>, ArticleError> {
-    let disk_modified_time = tokio::fs::metadata(&path)
-        .await
-        .and_then(|m| m.modified())
-        .ok();
-    let cached = ARTICLE_CACHE.get(path).map(|c| c.value().clone());
-    match (disk_modified_time, cached) {
-        (None, _) => Err(ArticleError::NoArticle),
-        (Some(disk_modified_time), Some(cached))
-            if cached.rendered_at >= disk_modified_time && !cached.meta.always_rerender =>
-        {
-            Ok(cached.clone())
-        }
-        (Some(_), cached) => match render_article(path).await {
-            Ok(article) => Ok(article),
-            Err(e) => cached.ok_or(e),
-        },
-    }
-}
-
-async fn render_article(path: &Arc<Path>) -> Result<Arc<Article>, ArticleError> {
     let (meta, ast) = get_metadata(path).await?;
+
+    let mut meta = (*meta).clone();
+    meta.mentioners.append({
+        let path = path.with_extension("");
+        let path = path.strip_prefix("articles").unwrap();
+        let path = path.to_string_lossy();
+        &mut db::mentions_of(&path).await
+    });
 
     let ast = ast.to_json();
 
@@ -136,10 +124,9 @@ async fn render_article(path: &Arc<Path>) -> Result<Arc<Article>, ArticleError> 
 
     let article = Arc::new(Article {
         content,
-        meta: meta.clone(),
+        meta,
         rendered_at: SystemTime::now(),
     });
-    ARTICLE_CACHE.insert(path.clone(), article.clone());
 
     Ok(article)
 }
@@ -225,7 +212,6 @@ async fn prerender_article(
     Ok((meta, ast))
 }
 
-static ARTICLE_CACHE: LazyLock<DashMap<Arc<Path>, Arc<Article>>> = LazyLock::new(DashMap::new);
 static AST_CACHE: LazyLock<DashMap<Arc<Path>, (Arc<ArticleMeta>, Arc<Pandoc>, SystemTime)>> =
     LazyLock::new(DashMap::new);
 static BUSY_ASTS: LazyLock<DashSet<Arc<Path>>> = LazyLock::new(DashSet::new);
@@ -312,7 +298,7 @@ impl Default for Search {
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct Article {
     pub content: String,
-    pub meta: Arc<ArticleMeta>,
+    pub meta: ArticleMeta,
     pub rendered_at: SystemTime,
 }
 
@@ -355,6 +341,8 @@ pub struct ArticleMeta {
     pub always_rerender: bool,
     #[serde(flatten)]
     pub extra: Value,
+    #[serde(default)]
+    pub mentioners: Vec<String>,
 }
 
 impl<'a> TryFrom<&Pandoc> for ArticleMeta {

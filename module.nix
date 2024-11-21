@@ -21,6 +21,12 @@ in {
       '';
     };
 
+    db-path = mkOption {
+      type = types.str;
+      default = "/var/lib/wolog.db";
+      description = "Path to the Wolog's database.";
+    };
+
     address = mkOption {
       type = types.str;
       default = "127.0.0.1";
@@ -123,6 +129,9 @@ in {
         wantedBy = ["multi-user.target"];
 
         path = [pkgs.pandoc];
+        environment = {
+          DATABASE_URL = "sqlite:${config.services.wolog.db-path}";
+        };
 
         serviceConfig = {
           Type = "simple";
@@ -137,6 +146,7 @@ in {
           '';
           Restart = "always";
           BindReadOnlyPaths = "${cfg.articlesDir} ${cfg.templatesDir} ${cfg.staticDir} ${workdir}";
+          BindReadWritePaths = "${config.services.wolog.db-path}";
           ProtectHome = "tmpfs";
         };
       };

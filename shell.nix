@@ -4,6 +4,8 @@ with pkgs;
     buildInputs = [
       sqlx-cli
       openssl
+      pkg-config
       rustup
     ];
+    DATABASE_URL = "sqlite:dev.db";
   }
