@@ -4,5 +4,10 @@ with pkgs;
     buildInputs = [
       sqlx-cli
       openssl
+      cargo
+      rustc
+      clippy
+      rust-analyzer
+      pandoc
     ];
   }
