@@ -9,5 +9,8 @@ with pkgs;
       clippy
       rust-analyzer
       pandoc
+      pkg-config
+      rustup
     ];
+    DATABASE_URL = "sqlite:dev.db";
   }

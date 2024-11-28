@@ -20,7 +20,11 @@
                 }
             },
             "args": [],
-            "cwd": "${workspaceFolder}"
+            "cwd": "${workspaceFolder}",
+            "env": {
+                "WOLOG_URL": "http://localhost:8000/",
+                // "DATABASE_URL": "sqlite::memory:"
+            }
         },
         {
             "type": "lldb",

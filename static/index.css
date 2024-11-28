@@ -16,11 +16,11 @@ html {
         --font-color: black;
         --font-accent: indigo;
         color: var(--font-color);
-        background: url(/bg-dots.png),
+        background: url(/static/bg-dots.png),
             linear-gradient(to bottom right, var(--background-accent), var(--background-color));
     }
 
-    body>div {
+    div.paper {
         align-items: initial;
         display: flex;
         margin: 32px;
@@ -89,7 +89,8 @@ html {
         border-bottom: 0;
     }
 
-    aside ul {
+    aside ul,
+    aside ol {
         padding-left: 16px;
     }
 
@@ -155,7 +156,7 @@ ul.horizontal>li:not(:last-child)::after {
 }
 
 @media screen and (orientation: portrait) {
-    body>div {
+    div.paper {
         flex-direction: column;
         max-width: unset;
         width: 100vw;
@@ -222,4 +223,8 @@ h3::before {
 
 a:hover {
     color: var(--font-accent)
+}
+
+main img {
+    max-width: 100%;
 }

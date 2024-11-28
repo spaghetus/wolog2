@@ -1,0 +1,7 @@
+{% import "macros" as macros %}
+
+<div class="cards hscroll">
+    {% for article in articles %}
+    {{ macros::article_card(path=article[0], meta=article[1]) }}
+    {% endfor %}
+</div>

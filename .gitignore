@@ -1,3 +1,4 @@
 /target
-/posts/*
-!/posts/.gitkeep
+articles/*
+.direnv
+dev.*
