@@ -2,10 +2,10 @@
 with pkgs;
   mkShell {
     buildInputs = [
-      sqlx-cli
+      # sqlx-cli
       openssl
-      cargo
-      rustc
+      # cargo
+      # rustc
       clippy
       rust-analyzer
       pandoc
@@ -13,4 +13,5 @@ with pkgs;
       rustup
     ];
     DATABASE_URL = "sqlite:dev.db";
+    SQLX_OFFLINE = true;
   }
