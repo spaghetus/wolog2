@@ -1,6 +1,6 @@
 {
   inputs = {
-    nixpkgs.url = "nixpkgs/nixos-24.05";
+    nixpkgs.url = "nixpkgs/nixos-unstable";
     flake-parts = {
       url = "github:hercules-ci/flake-parts";
       inputs.nixpkgs-lib.follows = "nixpkgs";
@@ -57,9 +57,15 @@
         pkg = pkgs.rustPlatform.buildRustPackage rec {
           pname = cargo.package.name;
           version = cargo.package.version;
+          nativeBuildInputs = [pkgs.pkg-config];
+          buildInputs = with pkgs; [openssl];
+          PKG_CONFIG_PATH = "${pkgs.openssl.dev}/lib/pkgconfig";
+          SQLX_OFFLINE = true;
           src = pkgs.runCommand "src" {} ''
             mkdir $out
             cp -r ${./src} $out/src
+            cp -r ${./.sqlx} $out/.sqlx
+            cp -r ${./migrations} $out/migrations
             cp -r ${./Cargo.toml} $out/Cargo.toml
             cp -r ${./Cargo.lock} $out/Cargo.lock
           '';
