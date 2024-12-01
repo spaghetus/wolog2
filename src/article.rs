@@ -205,6 +205,10 @@ async fn prerender_article(
         meta.created = DateTime::<Local>::from(created_time).date_naive();
     }
 
+    if !meta.ready && std::env::var("WOLOG_PREVIEW_NONREADY").is_err() {
+        return Err(ArticleError::NotForPublication);
+    }
+
     let meta = Arc::new(meta);
 
     AST_CACHE.insert(path.clone(), (meta.clone(), ast.clone(), SystemTime::now()));
