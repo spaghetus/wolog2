@@ -249,10 +249,10 @@ impl<'r> FromFormField<'r> for SortType {
     }
 }
 
+pub type Sorter = dyn Fn(&(&Path, &ArticleMeta), &(&Path, &ArticleMeta)) -> std::cmp::Ordering;
+
 impl SortType {
-    pub fn sort_fn(
-        &self,
-    ) -> &dyn Fn(&(&Path, &ArticleMeta), &(&Path, &ArticleMeta)) -> std::cmp::Ordering {
+    pub fn sort_fn(&self) -> &Sorter {
         match self {
             SortType::CreateAsc => &|(_, l), (_, r)| l.created.cmp(&r.created),
             SortType::CreateDesc => &|(_, l), (_, r)| r.created.cmp(&l.created),
@@ -345,11 +345,13 @@ pub struct ArticleMeta {
     pub always_rerender: bool,
     #[serde(flatten)]
     pub extra: Value,
-    #[serde(default)]
+    #[serde(skip)]
     pub mentioners: Vec<String>,
+    #[serde(skip)]
+    pub mentions: Vec<String>,
 }
 
-impl<'a> TryFrom<&Pandoc> for ArticleMeta {
+impl TryFrom<&Pandoc> for ArticleMeta {
     type Error = ArticleError;
 
     fn try_from(pandoc_ast: &Pandoc) -> Result<Self, Self::Error> {

@@ -3,6 +3,7 @@ use std::{
     time::Duration,
 };
 
+use reqwest::Client;
 use rocket::tokio::{
     runtime::Handle,
     sync::{OnceCell, Semaphore},
@@ -60,10 +61,24 @@ static WEBMENTION_BUCKET: LazyLock<Arc<Semaphore>> = LazyLock::new(|| {
 
 pub async fn received_webmention(from: String, to: String) {
     WEBMENTION_BUCKET.acquire().await.unwrap().forget();
-    let Ok(mentioner) = reqwest::get(&from).await else {
+    let Ok(mut mentioner) = reqwest::get(&from).await else {
         return;
     };
-    let Ok(mentioner) = mentioner.text().await else {
+    let Ok(Some(mentioner)): Result<_, reqwest::Error> = async {
+        let mut body = vec![];
+        while let Some(chunk) = mentioner.chunk().await? {
+            body.extend(chunk);
+            if body.len() > 0xFFFFFF {
+                return Ok(None);
+            }
+        }
+        Ok(Some(body))
+    }
+    .await
+    else {
+        return;
+    };
+    let Ok(mentioner) = String::from_utf8(mentioner) else {
         return;
     };
     let expected_url = WOLOG_URL.to_string() + &to.replace(" ", "%20");
@@ -92,3 +107,5 @@ pub async fn mentions_of(article: &str) -> Vec<String> {
     .unwrap_or_default();
     data.into_iter().map(|v| v.from_url).collect()
 }
+
+pub async fn send_webmention(from: String, to: String) {}

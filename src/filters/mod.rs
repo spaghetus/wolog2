@@ -9,7 +9,7 @@ use std::{
 
 use crate::article::Search;
 use chrono::{Local, NaiveDate};
-use pandoc_ast::{Attr, Block, Format, Inline, MutVisitor, Pandoc};
+use pandoc_ast::{Attr, Block, Format, Inline, MetaValue, MutVisitor, Pandoc};
 use rocket::tokio::{
     runtime::{Handle, Runtime},
     task::spawn_blocking,
@@ -19,7 +19,7 @@ use rocket_dyn_templates::{
     tera::{Context, Tera},
     Template,
 };
-use serde::{Deserialize, Serialize};
+use serde::{de::Visitor, Deserialize, Serialize};
 
 lazy_static::lazy_static! {
     static ref TERA: Tera = {
@@ -34,6 +34,7 @@ lazy_static::lazy_static! {
 
 pub async fn apply_filters(my_path: Arc<Path>, ast: Pandoc) -> Pandoc {
     let ast = frag_search_results(my_path.clone(), ast).await;
+    let ast = find_links(ast);
     ast
 }
 
@@ -88,5 +89,30 @@ async fn frag_search_results(my_path: Arc<Path>, mut ast: Pandoc) -> Pandoc {
             pandoc_ast::MetaValue::MetaBool(true),
         );
     }
+    ast
+}
+
+fn find_links(mut ast: Pandoc) -> Pandoc {
+    struct LinkVisitor(Vec<String>);
+    impl MutVisitor for LinkVisitor {
+        fn visit_inline(&mut self, inline: &mut Inline) {
+            match inline {
+                Inline::Link((_, classes, _), _contents, (target, _))
+                    if classes.iter().any(|c| c == "mention") =>
+                {
+                    self.0.push(target.to_string())
+                }
+                _ => {}
+            }
+            self.walk_inline(inline)
+        }
+    }
+    let mut visitor = LinkVisitor(vec![]);
+    visitor.walk_pandoc(&mut ast);
+    let LinkVisitor(mentions) = visitor;
+    ast.meta.insert(
+        "mentions".to_string(),
+        MetaValue::MetaList(mentions.into_iter().map(MetaValue::MetaString).collect()),
+    );
     ast
 }
