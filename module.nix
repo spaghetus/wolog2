@@ -87,6 +87,14 @@ in {
       '';
     };
 
+    preview = mkOption {
+      type = types.bool;
+      default = false;
+      description = ''
+        Allow rendering articles that aren't marked as ready.
+      '';
+    };
+
     settings = mkOption {
       type = toml.type;
       default = {};
@@ -129,9 +137,11 @@ in {
         wantedBy = ["multi-user.target"];
 
         path = [pkgs.pandoc];
-        environment = {
-          DATABASE_URL = "sqlite:${config.services.wolog.db-path}/wolog.db";
-        };
+        environment =
+          {
+            DATABASE_URL = "sqlite:${config.services.wolog.db-path}/wolog.db";
+          }
+          // mkIf cfg.preview {WOLOG_PREVIEW_NONREADY = "1";};
 
         serviceConfig = {
           Type = "simple";
