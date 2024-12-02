@@ -2,6 +2,10 @@
 
 {% block head %}
 <title>Page Listing</title>
+<link rel="alternate"
+    href="/feed/{{ search_path }}"
+    type="application/rss+xml"
+    title="RSS">
 {% endblock head %}
 
 {% block toc %}

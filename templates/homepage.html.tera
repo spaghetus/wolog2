@@ -1,5 +1,16 @@
 {% extends "article" %}
 
+
+{% block head %}
+<title>{{meta.title}}</title>
+<link href="/webmention"
+    rel="webmention" />
+<link rel="alternate"
+    href="/feed"
+    type="application/rss+xml"
+    title="RSS">
+{% endblock head %}
+
 {% block license %}
 <p xmlns:cc="http://creativecommons.org/ns#"
     xmlns:dct="http://purl.org/dc/terms/"><a property="dct:title"
