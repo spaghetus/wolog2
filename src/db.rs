@@ -62,6 +62,7 @@ static WEBMENTION_BUCKET: LazyLock<Arc<Semaphore>> = LazyLock::new(|| {
 pub async fn received_webmention(from: String, to: String) {
     WEBMENTION_BUCKET.acquire().await.unwrap().forget();
     let Ok(mut mentioner) = reqwest::get(&from).await else {
+        println!("Processing webmention {from}->{to} failed; couldn't start request.");
         return;
     };
     let Ok(Some(mentioner)): Result<_, reqwest::Error> = async {
@@ -76,13 +77,18 @@ pub async fn received_webmention(from: String, to: String) {
     }
     .await
     else {
+        println!("Processing webmention {from}->{to} failed; request failed or body was too big.");
         return;
     };
     let Ok(mentioner) = String::from_utf8(mentioner) else {
+        println!("Processing webmention {from}->{to} failed; non-UTF-8 response.");
         return;
     };
     let expected_url = WOLOG_URL.to_string() + &to.replace(" ", "%20");
     if !mentioner.contains(&expected_url) {
+        println!(
+            "Processing webmention {from}->{to} failed; doesn't actually mention {expected_url}."
+        );
         return;
     }
     if let Err(e) = sqlx::query!(
