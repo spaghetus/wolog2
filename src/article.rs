@@ -345,9 +345,9 @@ pub struct ArticleMeta {
     pub always_rerender: bool,
     #[serde(flatten)]
     pub extra: Value,
-    // #[serde(skip_deserializing)]
+    #[serde(default)]
     pub mentioners: Vec<String>,
-    // #[serde(skip_deserializing)]
+    #[serde(default)]
     pub mentions: Vec<String>,
 }
 
